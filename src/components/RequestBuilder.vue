@@ -22,6 +22,8 @@ const rawType = ref<'json' | 'text' | 'xml'>('json')
 const formData = ref<FormField[]>([{ id: '1', key: '', value: '', enabled: true, type: 'text' }])
 const jsonError = ref<string>('')
 const xmlError = ref<string>('')
+const useProxy = ref(true)
+const proxyUrl = window.location.origin + '/proxy'
 
 const request = computed({
     get: () => props.modelValue,
@@ -40,16 +42,11 @@ const bodyPlaceholder = computed(() => {
     return rawType.value === 'json' ? '{"key": "value"}' : rawType.value === 'xml' ? '<root></root>' : 'Enter request body...'
 })
 
-// JSON 校验
 watch(() => [rawType.value, request.value.body], () => {
     jsonError.value = ''
     xmlError.value = ''
     if (rawType.value === 'json' && request.value.body.trim()) {
-        try {
-            JSON.parse(request.value.body)
-        } catch (e: any) {
-            jsonError.value = e.message
-        }
+        try { JSON.parse(request.value.body) } catch (e: any) { jsonError.value = e.message }
     }
     if (rawType.value === 'xml' && request.value.body.trim()) {
         try {
@@ -57,53 +54,26 @@ watch(() => [rawType.value, request.value.body], () => {
             const doc = parser.parseFromString(request.value.body, 'text/xml')
             const parseError = doc.querySelector('parsererror')
             if (parseError) xmlError.value = parseError.textContent || 'Invalid XML'
-        } catch (e: any) {
-            xmlError.value = e.message
-        }
+        } catch (e: any) { xmlError.value = e.message }
     }
 }, { immediate: true })
 
-const addFormField = () => {
-    formData.value.push({ id: Date.now().toString(), key: '', value: '', enabled: true, type: 'text', file: null })
-}
-
-const removeFormField = (id: string) => {
-    const i = formData.value.findIndex(x => x.id === id)
-    if (i > -1 && formData.value.length > 1) formData.value.splice(i, 1)
-}
-
+const addFormField = () => formData.value.push({ id: Date.now().toString(), key: '', value: '', enabled: true, type: 'text', file: null })
+const removeFormField = (id: string) => { const i = formData.value.findIndex(x => x.id === id); if (i > -1 && formData.value.length > 1) formData.value.splice(i, 1) }
 const addPair = (arr: KeyValuePair[]) => arr.push({ id: Date.now().toString(), key: '', value: '', enabled: true })
-const removePair = (arr: KeyValuePair[], id: string) => {
-    const i = arr.findIndex(x => x.id === id)
-    if (i > -1 && arr.length > 1) arr.splice(i, 1)
-}
-
+const removePair = (arr: KeyValuePair[], id: string) => { const i = arr.findIndex(x => x.id === id); if (i > -1 && arr.length > 1) arr.splice(i, 1) }
 const handleFileChange = (field: FormField, event: Event) => {
     const input = event.target as HTMLInputElement
-    if (input.files && input.files[0]) {
-        field.file = input.files[0]
-        field.value = input.files[0].name
-    }
+    if (input.files && input.files[0]) { field.file = input.files[0]; field.value = input.files[0].name }
 }
-
-const setActiveTab = (tab: string) => {
-    activeSubTab.value = tab as 'query' | 'headers' | 'body'
-}
+const setActiveTab = (tab: string) => { activeSubTab.value = tab as 'query' | 'headers' | 'body' }
 
 const getBodyContent = () => {
     if (bodyMode.value === 'raw') return request.value.body
     const data = formData.value.filter(x => x.enabled && x.key)
-    if (bodyMode.value === 'x-www-form-urlencoded') {
-        return data.map(x => `${encodeURIComponent(x.key)}=${encodeURIComponent(x.value)}`).join('&')
-    }
+    if (bodyMode.value === 'x-www-form-urlencoded') return data.map(x => `${encodeURIComponent(x.key)}=${encodeURIComponent(x.value)}`).join('&')
     const fd = new FormData()
-    data.forEach(x => {
-        if (x.type === 'file' && x.file) {
-            fd.append(x.key, x.file)
-        } else {
-            fd.append(x.key, x.value)
-        }
-    })
+    data.forEach(x => { if (x.type === 'file' && x.file) fd.append(x.key, x.file); else fd.append(x.key, x.value) })
     return fd
 }
 
@@ -112,61 +82,47 @@ const sendRequest = async () => {
     try {
         const start = Date.now()
         const headers = request.value.headers.filter(h => h.enabled && h.key).reduce((a, h) => (a[h.key] = h.value, a), {} as Record<string, string>)
+        if (bodyMode.value === 'x-www-form-urlencoded') headers['Content-Type'] = 'application/x-www-form-urlencoded'
 
-        if (bodyMode.value === 'x-www-form-urlencoded') {
-            headers['Content-Type'] = 'application/x-www-form-urlencoded'
-        }
+        let finalUrl = computedUrl.value
+        if (useProxy.value) finalUrl = `${proxyUrl}?url=${encodeURIComponent(computedUrl.value)}`
 
         const res = await axios({
             method: request.value.method,
-            url: computedUrl.value,
+            url: finalUrl,
             headers,
             data: request.value.method !== 'GET' ? getBodyContent() : undefined,
             validateStatus: () => true
         })
-        emit('sent', {
-            status: res.status,
-            statusText: res.statusText,
-            headers: res.headers,
-            data: res.data,
-            time: Date.now() - start,
-            size: JSON.stringify(res.data).length,
-            contentType: res.headers['content-type'] || ''
-        })
+        emit('sent', { status: res.status, statusText: res.statusText, headers: res.headers, data: res.data, time: Date.now() - start, size: JSON.stringify(res.data).length, contentType: res.headers['content-type'] || '' })
     } catch (e: any) {
         emit('sent', { status: 0, statusText: e.message, headers: {}, data: e.toString(), time: 0, size: 0, contentType: 'text/plain' })
     } finally { emit('loading', false) }
 }
 
 const formatJson = () => {
-    try {
-        const parsed = JSON.parse(request.value.body)
-        request.value.body = JSON.stringify(parsed, null, 2)
-        jsonError.value = ''
-    } catch (e: any) {
-        jsonError.value = e.message
-    }
+    try { const parsed = JSON.parse(request.value.body); request.value.body = JSON.stringify(parsed, null, 2); jsonError.value = '' }
+    catch (e: any) { jsonError.value = e.message }
 }
 </script>
 
 <template>
     <div class="builder">
-        <!-- 请求行 -->
         <div class="request-line">
             <select v-model="request.method" class="method">
                 <option v-for="m in httpMethods" :key="m" :value="m">{{ m }}</option>
             </select>
             <input v-model="request.url" class="url" placeholder="https://api.example.com/data">
+            <label class="proxy-switch"><input type="checkbox" v-model="useProxy"><span
+                    class="proxy-text">本地代理模式</span></label>
             <button class="send" @click="sendRequest">Send</button>
         </div>
 
-        <!-- Computed URL 预览 -->
         <div v-if="computedUrl" class="computed">
-            <span class="label">Computed URL:</span>
-            <span class="value">{{ computedUrl }}</span>
+            <span class="label">{{ useProxy ? '代理 URL:' : 'Computed URL:' }}</span>
+            <span class="value">{{ useProxy ? proxyUrl + '?url=...' : computedUrl }}</span>
         </div>
 
-        <!-- 子选项卡 -->
         <div class="sub-tabs">
             <div v-for="t in ['query', 'headers', 'body']" :key="t" class="sub-tab"
                 :class="{ active: activeSubTab === t }" @click="setActiveTab(t)">
@@ -174,7 +130,6 @@ const formatJson = () => {
             </div>
         </div>
 
-        <!-- Query Params -->
         <div v-if="activeSubTab === 'query'" class="table-wrap">
             <table class="kv-table">
                 <thead>
@@ -197,7 +152,6 @@ const formatJson = () => {
             <button class="add-btn" @click="addPair(request.queryParams)">+ Add Parameter</button>
         </div>
 
-        <!-- Headers -->
         <div v-if="activeSubTab === 'headers'" class="table-wrap">
             <table class="kv-table">
                 <thead>
@@ -220,17 +174,13 @@ const formatJson = () => {
             <button class="add-btn" @click="addPair(request.headers)">+ Add Header</button>
         </div>
 
-        <!-- Body -->
         <div v-if="activeSubTab === 'body'" class="body-wrap">
-            <!-- Body 类型选择 -->
             <div class="body-modes">
                 <label v-for="mode in ['form-data', 'x-www-form-urlencoded', 'raw']" :key="mode" class="mode-label">
-                    <input type="radio" v-model="bodyMode" :value="mode">
-                    {{ mode }}
+                    <input type="radio" v-model="bodyMode" :value="mode">{{ mode }}
                 </label>
             </div>
 
-            <!-- form-data 支持文件上传 -->
             <div v-if="bodyMode === 'form-data'" class="table-wrap">
                 <table class="kv-table form-table">
                     <thead>
@@ -245,21 +195,18 @@ const formatJson = () => {
                     <tbody>
                         <tr v-for="item in formData" :key="item.id">
                             <td><input type="checkbox" v-model="item.enabled"></td>
-                            <td>
-                                <select v-model="item.type" class="type-select">
+                            <td><select v-model="item.type" class="type-select">
                                     <option value="text">Text</option>
                                     <option value="file">File</option>
-                                </select>
-                            </td>
+                                </select></td>
                             <td><input type="text" v-model="item.key" placeholder="field_name"></td>
                             <td>
                                 <input v-if="item.type === 'text'" type="text" v-model="item.value" placeholder="value">
                                 <div v-else class="file-input-wrap">
                                     <input type="file" :id="'file-' + item.id" class="file-input"
                                         @change="handleFileChange(item, $event)">
-                                    <label :for="'file-' + item.id" class="file-label">
-                                        {{ item.value || 'Choose file...' }}
-                                    </label>
+                                    <label :for="'file-' + item.id" class="file-label">{{ item.value || 'Choose file...'
+                                        }}</label>
                                 </div>
                             </td>
                             <td><button class="del-btn" @click="removeFormField(item.id)">✕</button></td>
@@ -269,7 +216,6 @@ const formatJson = () => {
                 <button class="add-btn" @click="addFormField">+ Add Field</button>
             </div>
 
-            <!-- x-www-form-urlencoded -->
             <div v-if="bodyMode === 'x-www-form-urlencoded'" class="table-wrap">
                 <table class="kv-table">
                     <thead>
@@ -292,7 +238,6 @@ const formatJson = () => {
                 <button class="add-btn" @click="addFormField">+ Add Field</button>
             </div>
 
-            <!-- raw 类型 + 语法校验 -->
             <div v-if="bodyMode === 'raw'" class="raw-wrap">
                 <div class="raw-types">
                     <label v-for="t in ['json', 'text', 'xml']" :key="t" class="type-label">
@@ -300,17 +245,10 @@ const formatJson = () => {
                     </label>
                     <button v-if="rawType === 'json'" class="format-btn" @click="formatJson">Format</button>
                 </div>
-
-                <!-- 语法错误提示 -->
-                <div v-if="jsonError" class="error-bar">
-                    <span class="error-icon">⚠</span>
-                    <span class="error-text">JSON Error: {{ jsonError }}</span>
-                </div>
-                <div v-if="xmlError" class="error-bar">
-                    <span class="error-icon">⚠</span>
-                    <span class="error-text">XML Error: {{ xmlError }}</span>
-                </div>
-
+                <div v-if="jsonError" class="error-bar"><span class="error-icon">⚠</span><span class="error-text">JSON
+                        Error: {{ jsonError }}</span></div>
+                <div v-if="xmlError" class="error-bar"><span class="error-icon">⚠</span><span class="error-text">XML
+                        Error: {{ xmlError }}</span></div>
                 <textarea v-model="request.body" class="body-textarea" :class="{ 'has-error': jsonError || xmlError }"
                     :placeholder="bodyPlaceholder"></textarea>
             </div>
@@ -341,6 +279,23 @@ const formatJson = () => {
 .url {
     flex: 1;
     padding: 6px 10px;
+}
+
+.proxy-switch {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 12px;
+    background: #2d2d2d;
+    border: 1px solid #555;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #ccc;
+    font-size: 12px;
+}
+
+.proxy-switch input[type="checkbox"]:checked+.proxy-text {
+    color: #4ec9b0;
 }
 
 .send {

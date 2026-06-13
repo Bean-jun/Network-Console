@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import axios from 'axios'
 import type { RequestData, ResponseData, HttpMethod, KeyValuePair } from '../types'
 
@@ -10,11 +10,18 @@ const emit = defineEmits<{
     'loading': [value: boolean]
 }>()
 
+interface FormField extends KeyValuePair {
+    type: 'text' | 'file'
+    file?: File | null
+}
+
 const httpMethods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 const activeSubTab = ref<'query' | 'headers' | 'body'>('query')
 const bodyMode = ref<'form-data' | 'x-www-form-urlencoded' | 'raw'>('raw')
 const rawType = ref<'json' | 'text' | 'xml'>('json')
-const formData = ref<KeyValuePair[]>([{ id: '1', key: '', value: '', enabled: true }])
+const formData = ref<FormField[]>([{ id: '1', key: '', value: '', enabled: true, type: 'text' }])
+const jsonError = ref<string>('')
+const xmlError = ref<string>('')
 
 const request = computed({
     get: () => props.modelValue,
@@ -30,13 +37,53 @@ const computedUrl = computed(() => {
 })
 
 const bodyPlaceholder = computed(() => {
-    return rawType.value === 'json' ? '{"key": "value"}' : 'Enter request body...'
+    return rawType.value === 'json' ? '{"key": "value"}' : rawType.value === 'xml' ? '<root></root>' : 'Enter request body...'
 })
+
+// JSON 校验
+watch(() => [rawType.value, request.value.body], () => {
+    jsonError.value = ''
+    xmlError.value = ''
+    if (rawType.value === 'json' && request.value.body.trim()) {
+        try {
+            JSON.parse(request.value.body)
+        } catch (e: any) {
+            jsonError.value = e.message
+        }
+    }
+    if (rawType.value === 'xml' && request.value.body.trim()) {
+        try {
+            const parser = new DOMParser()
+            const doc = parser.parseFromString(request.value.body, 'text/xml')
+            const parseError = doc.querySelector('parsererror')
+            if (parseError) xmlError.value = parseError.textContent || 'Invalid XML'
+        } catch (e: any) {
+            xmlError.value = e.message
+        }
+    }
+}, { immediate: true })
+
+const addFormField = () => {
+    formData.value.push({ id: Date.now().toString(), key: '', value: '', enabled: true, type: 'text', file: null })
+}
+
+const removeFormField = (id: string) => {
+    const i = formData.value.findIndex(x => x.id === id)
+    if (i > -1 && formData.value.length > 1) formData.value.splice(i, 1)
+}
 
 const addPair = (arr: KeyValuePair[]) => arr.push({ id: Date.now().toString(), key: '', value: '', enabled: true })
 const removePair = (arr: KeyValuePair[], id: string) => {
     const i = arr.findIndex(x => x.id === id)
     if (i > -1 && arr.length > 1) arr.splice(i, 1)
+}
+
+const handleFileChange = (field: FormField, event: Event) => {
+    const input = event.target as HTMLInputElement
+    if (input.files && input.files[0]) {
+        field.file = input.files[0]
+        field.value = input.files[0].name
+    }
 }
 
 const setActiveTab = (tab: string) => {
@@ -50,7 +97,13 @@ const getBodyContent = () => {
         return data.map(x => `${encodeURIComponent(x.key)}=${encodeURIComponent(x.value)}`).join('&')
     }
     const fd = new FormData()
-    data.forEach(x => fd.append(x.key, x.value))
+    data.forEach(x => {
+        if (x.type === 'file' && x.file) {
+            fd.append(x.key, x.file)
+        } else {
+            fd.append(x.key, x.value)
+        }
+    })
     return fd
 }
 
@@ -89,7 +142,10 @@ const formatJson = () => {
     try {
         const parsed = JSON.parse(request.value.body)
         request.value.body = JSON.stringify(parsed, null, 2)
-    } catch { }
+        jsonError.value = ''
+    } catch (e: any) {
+        jsonError.value = e.message
+    }
 }
 </script>
 
@@ -164,7 +220,7 @@ const formatJson = () => {
             <button class="add-btn" @click="addPair(request.headers)">+ Add Header</button>
         </div>
 
-        <!-- Body - 统一表格风格 -->
+        <!-- Body -->
         <div v-if="activeSubTab === 'body'" class="body-wrap">
             <!-- Body 类型选择 -->
             <div class="body-modes">
@@ -174,8 +230,47 @@ const formatJson = () => {
                 </label>
             </div>
 
-            <!-- form-data / urlencoded 用表格编辑 -->
-            <div v-if="bodyMode !== 'raw'" class="table-wrap">
+            <!-- form-data 支持文件上传 -->
+            <div v-if="bodyMode === 'form-data'" class="table-wrap">
+                <table class="kv-table form-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px"></th>
+                            <th style="width: 80px">Type</th>
+                            <th>Key</th>
+                            <th>Value</th>
+                            <th style="width: 50px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="item in formData" :key="item.id">
+                            <td><input type="checkbox" v-model="item.enabled"></td>
+                            <td>
+                                <select v-model="item.type" class="type-select">
+                                    <option value="text">Text</option>
+                                    <option value="file">File</option>
+                                </select>
+                            </td>
+                            <td><input type="text" v-model="item.key" placeholder="field_name"></td>
+                            <td>
+                                <input v-if="item.type === 'text'" type="text" v-model="item.value" placeholder="value">
+                                <div v-else class="file-input-wrap">
+                                    <input type="file" :id="'file-' + item.id" class="file-input"
+                                        @change="handleFileChange(item, $event)">
+                                    <label :for="'file-' + item.id" class="file-label">
+                                        {{ item.value || 'Choose file...' }}
+                                    </label>
+                                </div>
+                            </td>
+                            <td><button class="del-btn" @click="removeFormField(item.id)">✕</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <button class="add-btn" @click="addFormField">+ Add Field</button>
+            </div>
+
+            <!-- x-www-form-urlencoded -->
+            <div v-if="bodyMode === 'x-www-form-urlencoded'" class="table-wrap">
                 <table class="kv-table">
                     <thead>
                         <tr>
@@ -190,14 +285,14 @@ const formatJson = () => {
                             <td><input type="checkbox" v-model="item.enabled"></td>
                             <td><input type="text" v-model="item.key" placeholder="field_name"></td>
                             <td><input type="text" v-model="item.value" placeholder="value"></td>
-                            <td><button class="del-btn" @click="removePair(formData, item.id)">✕</button></td>
+                            <td><button class="del-btn" @click="removeFormField(item.id)">✕</button></td>
                         </tr>
                     </tbody>
                 </table>
-                <button class="add-btn" @click="addPair(formData)">+ Add Field</button>
+                <button class="add-btn" @click="addFormField">+ Add Field</button>
             </div>
 
-            <!-- raw 类型用文本域 -->
+            <!-- raw 类型 + 语法校验 -->
             <div v-if="bodyMode === 'raw'" class="raw-wrap">
                 <div class="raw-types">
                     <label v-for="t in ['json', 'text', 'xml']" :key="t" class="type-label">
@@ -205,7 +300,19 @@ const formatJson = () => {
                     </label>
                     <button v-if="rawType === 'json'" class="format-btn" @click="formatJson">Format</button>
                 </div>
-                <textarea v-model="request.body" class="body-textarea" :placeholder="bodyPlaceholder"></textarea>
+
+                <!-- 语法错误提示 -->
+                <div v-if="jsonError" class="error-bar">
+                    <span class="error-icon">⚠</span>
+                    <span class="error-text">JSON Error: {{ jsonError }}</span>
+                </div>
+                <div v-if="xmlError" class="error-bar">
+                    <span class="error-icon">⚠</span>
+                    <span class="error-text">XML Error: {{ xmlError }}</span>
+                </div>
+
+                <textarea v-model="request.body" class="body-textarea" :class="{ 'has-error': jsonError || xmlError }"
+                    :placeholder="bodyPlaceholder"></textarea>
             </div>
         </div>
     </div>
@@ -326,6 +433,45 @@ const formatJson = () => {
     background: #3c3c3c;
 }
 
+.type-select {
+    width: 100%;
+    padding: 4px;
+    border: none;
+    background: #3c3c3c;
+    font-size: 11px;
+}
+
+.file-input-wrap {
+    position: relative;
+    width: 100%;
+}
+
+.file-input {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+}
+
+.file-label {
+    display: block;
+    padding: 6px 8px;
+    background: #3c3c3c;
+    border: 1px solid #555;
+    border-radius: 3px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: #ccc;
+}
+
+.file-label:hover {
+    background: #464646;
+}
+
 .del-btn {
     background: transparent;
     color: #f48771;
@@ -389,6 +535,27 @@ const formatJson = () => {
     background: #464646;
 }
 
+.error-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #3c2020;
+    border: 1px solid #6b2020;
+    border-radius: 3px;
+}
+
+.error-icon {
+    color: #f48771;
+    font-size: 14px;
+}
+
+.error-text {
+    color: #f48771;
+    font-size: 12px;
+    font-family: Consolas, monospace;
+}
+
 .raw-wrap {
     flex: 1;
     display: flex;
@@ -403,5 +570,9 @@ const formatJson = () => {
     font-family: Consolas, monospace;
     font-size: 13px;
     line-height: 1.6;
+}
+
+.body-textarea.has-error {
+    border-color: #f48771;
 }
 </style>

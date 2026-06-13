@@ -1,14 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import axios from 'axios'
-import type { RequestData, ResponseData, HttpMethod, KeyValuePair } from '../types'
+import type { RequestData, HttpMethod, KeyValuePair } from '../types'
 
 const props = defineProps<{ modelValue: RequestData }>()
-const emit = defineEmits<{
-    'update:modelValue': [value: RequestData]
-    'sent': [response: ResponseData]
-    'loading': [value: boolean]
-}>()
+const emit = defineEmits(['update:modelValue', 'sent', 'loading'])
 
 interface FormField extends KeyValuePair {
     type: 'text' | 'file'
@@ -114,7 +110,7 @@ const formatJson = () => {
             </select>
             <input v-model="request.url" class="url" placeholder="https://api.example.com/data">
             <label class="proxy-switch"><input type="checkbox" v-model="useProxy"><span
-                    class="proxy-text">本地代理模式</span></label>
+                    class="proxy-text">代理</span></label>
             <button class="send" @click="sendRequest">Send</button>
         </div>
 

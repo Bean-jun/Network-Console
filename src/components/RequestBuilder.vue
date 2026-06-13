@@ -18,7 +18,7 @@ const rawType = ref<'json' | 'text' | 'xml'>('json')
 const formData = ref<FormField[]>([{ id: '1', key: '', value: '', enabled: true, type: 'text' }])
 const jsonError = ref<string>('')
 const xmlError = ref<string>('')
-const useProxy = ref(true)
+const useProxy = ref(false)
 const proxyUrl = window.location.origin + '/proxy'
 
 const request = computed({
@@ -110,7 +110,7 @@ const formatJson = () => {
             </select>
             <input v-model="request.url" class="url" placeholder="https://api.example.com/data">
             <label class="proxy-switch"><input type="checkbox" v-model="useProxy"><span
-                    class="proxy-text">代理</span></label>
+                    class="proxy-text">本地代理模式</span></label>
             <button class="send" @click="sendRequest">Send</button>
         </div>
 

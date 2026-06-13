@@ -29,6 +29,10 @@ const removePair = (arr: KeyValuePair[], id: string) => {
     if (i > -1 && arr.length > 1) arr.splice(i, 1)
 }
 
+const setActiveTab = (tab: string) => {
+    activeSubTab.value = tab as 'query' | 'headers' | 'body'
+}
+
 const sendRequest = async () => {
     emit('loading', true)
     try {
@@ -54,8 +58,9 @@ const sendRequest = async () => {
         <div v-if="computedUrl" class="computed">Computed: {{ computedUrl }}</div>
         <div class="sub-tabs">
             <div v-for="t in ['query', 'headers', 'body']" :key="t" class="sub-tab"
-                :class="{ active: activeSubTab === t }" @click="activeSubTab = t as any">{{ t === 'query' ? 'Query
-                Params' : t === 'headers' ? 'Headers' : 'Body' }}</div>
+                :class="{ active: activeSubTab === t }" @click="setActiveTab(t)">
+                {{ t === 'query' ? 'Query Params' : t === 'headers' ? 'Headers' : 'Body' }}
+            </div>
         </div>
         <div v-if="activeSubTab === 'query' || activeSubTab === 'headers'" class="table-wrap">
             <table>

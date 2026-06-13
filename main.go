@@ -1,20 +1,28 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"io"
+	"log"
+	"mime"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
+//go:embed dist/*
+var frontend embed.FS
+
 func main() {
 	var port = 7256
 	flag.IntVar(&port, "port", 7256, "指定代理服务器端口")
 	flag.Parse()
 
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
 	// 允许所有 CORS
@@ -70,6 +78,29 @@ func main() {
 		io.Copy(c.Writer, resp.Body)
 	})
 
-	println("🚀 代理服务器运行在 http://localhost:" + strconv.Itoa(port))
+	r.GET("/", func(c *gin.Context) {
+		f, err := frontend.ReadFile("dist/index.html")
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.Data(200, "text/html", f)
+	})
+	r.GET("/assets/*filepath", func(c *gin.Context) {
+		assertFile := path.Join("dist", "assets", c.Param("filepath"))
+		f, err := frontend.ReadFile(assertFile)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctype := mime.TypeByExtension(path.Ext(assertFile))
+		if ctype == "" {
+			ctype = "application/octet-stream"
+		}
+		c.Data(200, ctype, f)
+	})
+
+	log.Println("🚀 代理服务器运行在 http://localhost:" + strconv.Itoa(port))
 	r.Run(":" + strconv.Itoa(port))
 }
